@@ -1,0 +1,128 @@
+language: java
+cache:
+  apt: true
+  directories:
+    # Cache octave packages
+    - $HOME/octave
+    # Cache other packages
+    - $HOME/external_cache
+
+env:
+  matrix:
+    - COVERAGE="false"
+    - COVERAGE="true"
+
+matrix:
+  allow_failures:
+    - env: COVERAGE="true"
+  fast_finish: true
+
+before_install:
+
+  - REPOPATH="$(pwd)" && pwd
+  - UPGRADE_GCC="true"
+  - travis_retry sudo add-apt-repository -y ppa:octave/stable
+  - if [ "$UPGRADE_GCC" = "true" ]; then
+      sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test;
+    fi
+  - travis_retry sudo apt-get update -qq
+  - travis_retry sudo apt-get install -y octave liboctave-dev
+  - if [ "$UPGRADE_GCC" = "true" ]; then
+      travis_retry sudo apt-get install -y gcc-4.8 g++-4.8;
+      sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-4.8 50;
+      sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-4.8 50;
+    fi;
+  - which g++;
+    g++ --version;
+    which gcc;
+    gcc --version;
+
+  - cd ..;
+    ls -alh;
+
+  - rm -rf MOxUnit;
+  - git clone https://github.com/MOxUnit/MOxUnit.git
+
+  - make -C MOxUnit install
+
+  - if [ "$COVERAGE" = "true" ]; then
+        rm -rf MOcov;
+        git clone https://github.com/MOcov/MOcov.git;
+        make -C MOcov install;
+    fi;
+
+  - cd ${REPOPATH}
+
+
+install:
+
+  - rm -rf external;
+    mkdir -p external;
+
+  - if [ -f requirements-octave.txt ]; then
+      mopi/mopi.sh requirements-octave.txt external "$HOME/external_cache";
+    fi;
+
+  - if [ -f requirements.txt ]; then
+      mopi/mopi.sh requirements.txt external "$HOME/external_cache";
+    fi;
+ 
+  - if [ -f requirements-dev.txt ]; then
+      mopi/mopi.sh requirements-dev.txt external "$HOME/external_cache";
+    fi;
+
+  - PACKAGE_FOLDER="package_name";
+    ADDPATH_COMMAND="addpath(genpath(fullfile(pwd, '$PACKAGE_FOLDER')));";
+    ADDPATH_COMMAND+=" addpath(genpath(fullfile(pwd, 'external')));";
+    echo "ADDPATH_COMMAND| $ADDPATH_COMMAND";
+
+
+before_script:
+  - TEST_ARGS="'-recursive', '-verbose', '-junit_xml_file', 'testresults.xml'";
+    if [ "$COVERAGE" = "true" ]; then
+        TEST_ARGS+=", '-with_coverage', '-cover', '$PACKAGE_FOLDER'";
+        TEST_ARGS+=", '-cover_exclude', 'tests'";
+        TEST_ARGS+=", '-cover_xml_file', 'coverage.xml'";
+        TEST_ARGS+=", '-cover_json_file', 'coveralls.json'";
+    fi;
+    TEST_COMMAND="exit(~moxunit_runtests('tests', $TEST_ARGS));";
+    echo "TEST_COMMAND| $TEST_COMMAND";
+  - pwd
+  - octave -q --eval "ver"
+
+  - rm -f testresults.xml;
+    rm -f coverage.xml;
+    rm -f .coverage;
+    rm -f coveralls.json;
+
+  - if [ "$SHIPPABLE" = "true" ]; then
+      rm -fr shippable;
+      mkdir -p shippable/testresults;
+      mkdir -p shippable/codecoverage;
+    fi;
+
+
+script:
+  - octave -q --eval "$ADDPATH_COMMAND $TEST_COMMAND";
+
+after_script:
+  
+  - pwd
+  - ls -alh
+
+  - if [ "$SHIPPABLE" = "true" ] && [ -f testresults.xml ]; then
+      mv testresults.xml shippable/testresults/;
+    fi;
+    if [ "$SHIPPABLE" = "true" ] && [ -f coverage.xml ]; then
+      cp coverage.xml shippable/codecoverage/;
+    fi;
+
+after_success:
+  
+  - if [ "$COVERAGE" = "true" ] && [ "$TRAVIS" = "true" ] && [ "$SHIPPABLE" != "true" ]; then
+      curl --verbose -F json_file=@`pwd`/coveralls.json https://coveralls.io/api/v1/jobs  || echo "Coveralls push failed";
+      bash <(curl -s https://codecov.io/bash) || echo "Codecov push failed";
+    fi;
+
+
+archive: true
